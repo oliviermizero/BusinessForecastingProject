@@ -60,8 +60,6 @@ subset_data = merged_data[(merged_data['Q-demos-gender'] == 'Female') & (merged_
 #Calculate Revenue to use in forecast
 subset_data['Revenue'] = subset_data['Quantity'] * subset_data['Purchase Price Per Unit']
 
-subset_data['Order Date'].max()
-
 # Convert 'Order Date' to datetime
 subset_data['Order Date'] = pd.to_datetime(subset_data['Order Date'])
 
@@ -90,137 +88,28 @@ aggregated_data['Day of Week'] = aggregated_data['Order Date'].dt.dayofweek
 # Display the first few rows of the aggregated data
 aggregated_data['prime_proportion'] = aggregated_data['Prime Customer'] / aggregated_data['Quantity']
 
-#Exponential Smoothing
-
-#Create a series to feed to the exponential smoothing model
 revenue = aggregated_data['Revenue']
 revenue.index = aggregated_data['Order Date']
-
-#Run a model with a 30 day seasonal period and an additive trend and seasonal component
-expModel = ExponentialSmoothing(revenue, trend='add', seasonal='add', seasonal_periods=30).fit()
-
-#Forecast 90 days into the future
-expForecast = expModel.forecast(90)
-
-#expModel.summary()
-
-# Create a DataFrame with the actual revenue and the forecasts
-smoothData = pd.DataFrame({
-        'Truth': revenue.values,
-        'Model': expModel.fittedvalues
-}, index=revenue.index)
-
-# Add the forecasts to the DataFrame
-forecast_dates = pd.date_range(start=revenue.index[-1], periods=90, freq='D')
-forecast_df = pd.DataFrame({
-        'Forecast': expForecast
-}, index=forecast_dates)
-
-# Combine the actual and forecast data
-combined_data = pd.concat([smoothData, forecast_df])
-
-# Plot the data
-fig = px.line(combined_data, y=['Truth', 'Model', 'Forecast'], 
-              title='Exponential Smoothing Forecast', 
-              labels={'value': 'Revenue', 'variable': 'Type'},
-                          x=combined_data.index,
-                          color_discrete_map={
-                                  "Truth": 'blue',
-                                  'Model': 'red',
-                                  'Forecast': 'red'
-                          })
-
-fig.show()
-
-# GAM
 
 aggregated_data['Weekday'] = aggregated_data['Order Date'].dt.dayofweek
 aggregated_data.set_index('Order Date', inplace=True)
 x = aggregated_data[["Year", "Month", "Day", "Weekday", "prime_proportion"]]
 y = aggregated_data["Revenue"]
 
-# Split into training and test sets
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
-
-# Assuming gam is your trained LinearGAM model
-gam = LinearGAM().fit(x, y)
-
-# Plot partial dependence
-gam.summary()  # Summary should list all feature splines
-
-# Plot each term (feature)
-import matplotlib.pyplot as plt
-plt.figure()
-fig, axs = plt.subplots(nrows=3, figsize=(15, 15))  # Adjust nrows to the number of features
-
-for i, ax in enumerate(axs):
-    XX = gam.generate_X_grid(term=i)
-    ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX))
-    ax.plot(XX[:, i], gam.partial_dependence(term=i, X=XX, width=.95)[1], c='r', ls='--')
-    ax.set_title(f"Partial dependence for term {i}")
-plt.show()
-
-plt.plot([0, 1], [0, 1])
-plt.show()
-
-XX = gam.generate_X_grid(term=0)
-print(XX)
-pd = gam.partial_dependence(term=0, X=XX)
-plt.plot(XX[:, 0], pd)
-plt.show()
-
-# Select only the first two columns of x_test
-x_test_selected = x_test.iloc[:, :5]
-
-y_pred = gam.predict(x_test_selected)
-print("R^2:", r2_score(y_test, y_pred))
-print("MAE:", mean_absolute_error(y_test, y_pred))
-print("RMSE:", mean_squared_error(y_test, y_pred) ** 0.5)
-
-endDate = pd.to_datetime("2022-12-21")
-
-# Generate dates for the next 3 months
-future_dates = pd.date_range(start=endDate, periods=90, freq="D")
-
-# Generate the same features as used in the training data
-future_features = pd.DataFrame({
-    "Year": future_dates.year,
-    "Month": future_dates.month,
-    "Day": future_dates.day,
-    "Weekday": future_dates.weekday,
-    "prime_proportion": 0.5  # Assume 50% prime customers
-})
-
-future_predictions = gam.predict(future_features)
-
-# Get confidence intervals
-intervals = gam.prediction_intervals(future_features, width=0.95)
-lower = intervals[:, 0]  # Lower bounds
-upper = intervals[:, 1]  # Upper bounds
-
-# Plot the results
-fig = px.line(x=future_dates, y=future_predictions, labels={'x': 'Date', 'y': 'Revenue'}, title='Predicted Daily Revenue for the Next 3 Months')
-fig.add_scatter(x=future_dates, y=lower, mode='lines', line=dict(color='gray'), name='Lower Bound')
-fig.add_scatter(x=future_dates, y=upper, mode='lines', line=dict(color='gray'), name='Upper Bound', fill='tonexty')
-fig.show()
-
 #SARIMAX
 
-# Assuming aggregated_data is already loaded in the notebook
 # Ensure the data is sorted by the index
 aggregated_data = aggregated_data.sort_index()
 aggregated_data.rename(columns={'Day of Week': 'Weekday'}, inplace=True)
 
 exog_vars = aggregated_data[['prime_proportion', 'Prime Purchase', 'Prime Customer']]
+
 # Fit SARIMAX Model
 model = SARIMAX(aggregated_data["Revenue"], 
                 order=(1, 1, 1),  # p, d, q
                 seasonal_order=(1, 1, 1, 7),  # P, D, Q, s 
                 exog=exog_vars)  # Exogenous variables
 result = model.fit()
-
-# Summary of the model
-print(result.summary())
 
 # Generate in-sample predictions
 in_sample_predictions = result.predict(start=aggregated_data.index[0], end=aggregated_data.index[-1], exog=exog_vars)
@@ -229,24 +118,13 @@ in_sample_predictions = result.predict(start=aggregated_data.index[0], end=aggre
 days_in_month = 365 / 12
 forecast_steps = int(3 * days_in_month)  # Forecast for 12 months
 
-# Assuming you have future exogenous variables for the forecast period
-# If not, you can use the last available exogenous variables or create a placeholder
+# Create exogenous variables for the forecast period
 exog_forecast = exog_vars.loc[pd.to_datetime('2021-12-21'):pd.to_datetime('2021-12-21') + pd.Timedelta(days=90)]
 
 # Forecast
 forecast = result.get_forecast(steps=forecast_steps, exog=exog_forecast)
 forecast_values = forecast.predicted_mean
 conf_int = forecast.conf_int()
-
-# Plot the original data and the SARIMAX in-sample predictions
-plt.figure(figsize=(12, 6))
-plt.plot(aggregated_data["Revenue"], label="Observed")
-plt.plot(in_sample_predictions, label="SARIMAX Fit", color='green')
-plt.xlabel('Date')
-plt.ylabel('Revenue')
-plt.title('SARIMAX In-Sample Fit')
-plt.legend()
-plt.show()
 
 # Plot the original data and the SARIMAX forecast
 plt.figure(figsize=(12, 6))
@@ -277,14 +155,8 @@ fig = go.Figure()
 # Add the actual revenue data
 fig.add_trace(go.Scatter(x=revenue.index, y=revenue, mode='lines', name='Actual Revenue', line=dict(color='blue')))
 
-# Add the Exponential Smoothing model
-fig.add_trace(go.Scatter(x=combined_data.index, y=combined_data['Model'], mode='lines', name='Exponential Smoothing Model', line=dict(color='red')))
-
 # Add the SARIMAX model
 fig.add_trace(go.Scatter(x=aggregated_data.index, y=in_sample_predictions, mode='lines', name='SARIMAX Model', line=dict(color='green')))
-
-# Add the GAM model
-fig.add_trace(go.Scatter(x=x.index, y=gam.predict(x), mode='lines', name='GAM Model', line=dict(color='purple')))
 
 # Update layout
 fig.update_layout(title='Revenue Model Comparison',
@@ -292,44 +164,16 @@ fig.update_layout(title='Revenue Model Comparison',
                   yaxis_title='Revenue',
                   template='plotly_white')
 
-# Add the Exponential Smoothing forecast
-fig.add_trace(go.Scatter(x=forecast_df.index, y=forecast_df['Forecast'], mode='lines', name='Exponential Smoothing Forecast', line=dict(color='red'), opacity=0.7))
-
 # Add the SARIMAX forecast
 fig.add_trace(go.Scatter(x=forecast_values.index, y=forecast_values, mode='lines', name='SARIMAX Forecast', line=dict(color='green'), opacity=0.7))
 
-# Add the GAM forecast
-fig.add_trace(go.Scatter(x=future_dates, y=future_predictions, mode='lines', name='GAM Forecast', line=dict(color='purple'), opacity=0.7))
-
-# Show the plot
-fig.show()
-
-# Residual Plots
-
-# Residual plot for GAM
-gam_residuals = gam.deviance_residuals(x.iloc[:, :5], y)
-fig = go.Figure()
-fig.add_trace(go.Scatter(x=y, y=gam_residuals, mode='markers', name='GAM Residuals', marker=dict(color='blue', opacity=0.4)))
-
-# Residual plot for Exponential Smoothing Model
-exp_residuals = expModel.resid
-fig.add_trace(go.Scatter(x=revenue, y=exp_residuals, mode='markers', name='Exponential Smoothing Residuals', marker=dict(color='red', opacity=0.4)))
-
 # Residual plot for SARIMAX Model
 sarimax_residuals = aggregated_data["Revenue"] - in_sample_predictions
-fig.add_trace(go.Scatter(x=aggregated_data["Revenue"], y=sarimax_residuals, mode='markers', name='SARIMAX Residuals', marker=dict(color='green', opacity=0.4)))
+#fig.add_trace(go.Scatter(x=aggregated_data["Revenue"], y=sarimax_residuals, mode='markers', name='SARIMAX Residuals', marker=dict(color='green', opacity=0.4)))
 
 # Update layout once at the end
-fig.update_layout(title='Residual Plot for Models', xaxis_title='Observed', yaxis_title='Residuals')
-
-fig.show()
-
-# Calculate accuracy metrics for Exponential Smoothing model
-mae_exp = mean_absolute_error(revenue, expModel.fittedvalues)
-rmse_exp = np.sqrt(mean_squared_error(revenue, expModel.fittedvalues))
-
-print(f"Exponential Smoothing - Mean Absolute Error (MAE): {mae_exp:.2f}")
-print(f"Exponential Smoothing - Root Mean Squared Error (RMSE): {rmse_exp:.2f}")
+#fig.update_layout(title='Residual Plot for Models', xaxis_title='Observed', yaxis_title='Residuals')
+#fig.show()
 
 # Calculate accuracy metrics for SARIMAX model
 mae_sarimax = mean_absolute_error(aggregated_data["Revenue"], in_sample_predictions)
@@ -337,13 +181,6 @@ rmse_sarimax = np.sqrt(mean_squared_error(aggregated_data["Revenue"], in_sample_
 
 print(f"SARIMAX - Mean Absolute Error (MAE): {mae_sarimax:.2f}")
 print(f"SARIMAX - Root Mean Squared Error (RMSE): {rmse_sarimax:.2f}")
-
-# Calculate accuracy metrics for GAM model
-mae_gam = mean_absolute_error(y_test, y_pred)
-rmse_gam = np.sqrt(mean_squared_error(y_test, y_pred))
-
-print(f"GAM - Mean Absolute Error (MAE): {mae_gam:.2f}")
-print(f"GAM - Root Mean Squared Error (RMSE): {rmse_gam:.2f}")
 
 #Sarimax Forecast
 sum(forecast_values)
@@ -365,7 +202,6 @@ average_prices_diff = pd.merge(average_prices_diff, prime_purchase_quantities, o
 # Display the top 40 values
 top_differences = average_prices_diff
 top_differences = top_differences[(top_differences['Difference'] > 0) & (top_differences['Proportion'] > 0.035)]
-top_differences.head(40)
 
 # Filter the subset_data for products in the top differences categories
 top_diff_revenue_data = subset_data[subset_data['Category'].isin(top_differences['Category'])]
@@ -395,9 +231,8 @@ num_categories_not_in_top_differences = len(categories_not_in_top_differences)
 top_products_data = subset_data[subset_data['Category'].isin(top_differences['Category'])]
 
 # Plot the distribution of prices for "HEALTH_PERSONAL_CARE" colored by prime purchase using plotly express
-fig = px.histogram(top_products_data, x='Purchase Price Per Unit', color='Prime Purchase', nbins=50, marginal='box', title='Distribution of Prices for Top Products by Prime Purchase')
-fig.update_layout(xaxis_title='Purchase Price Per Unit', yaxis_title='Frequency')
-fig.show()
+#fig = px.histogram(top_products_data, x='Purchase Price Per Unit', color='Prime Purchase', nbins=50, marginal='box', title='Distribution of Prices for Top Products by Prime Purchase')
+#fig.update_layout(xaxis_title='Purchase Price Per Unit', yaxis_title='Frequency')
 
 # Take a subset of the data for the top categories for prime day sales
 subset_data_with_top_diff = subset_data[subset_data['Category'].isin(top_differences['Category'])]
@@ -418,7 +253,6 @@ aggregated_diff_data['Day of Week'] = aggregated_diff_data['Order Date'].dt.dayo
 
 # Display the first few rows of the aggregated data
 aggregated_diff_data['prime_proportion'] = aggregated_diff_data['Prime Customer'] / aggregated_diff_data['Quantity']
-aggregated_diff_data.head()
 
 #Forecast the sale quantities for top prime products in the next 3 months
 
@@ -447,24 +281,6 @@ forecast_dates_diff = pd.date_range(start=revenue_diff.index[-1], periods=90, fr
 forecast_df_diff = pd.DataFrame({
     'Forecast': forecast_diff
 }, index=forecast_dates_diff)
-
-# Combine the actual, fitted, and forecast data
-combined_data_diff = pd.concat([combined_data_diff, forecast_df_diff])
-
-# Plot the data using Plotly
-fig = px.line(combined_data_diff, y=['Actual', 'Fitted', 'Forecast'], 
-              title='Exponential Smoothing Forecast on Aggregated Diff Data', 
-              labels={'value': 'Quantity', 'variable': 'Type'},
-              x=combined_data_diff.index,
-              color_discrete_map={
-                  "Actual": 'blue',
-                  'Fitted': 'red',
-              })
-
-# Add the forecast to the plot
-fig.add_scatter(x=forecast_dates_diff, y=forecast_diff, mode='lines', name='Forecast', line=dict(color='green'))
-
-fig.show()
 
 # Calculate Expected Quantities
 sum(forecast_diff) * 1.035, sum(forecast_diff) * 1.1, sum(forecast_diff) * 1 # 3.5% increase, 10% increase, no increase
